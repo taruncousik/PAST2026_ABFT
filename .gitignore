@@ -1,0 +1,11 @@
+# MATLAB
+*.asv
+*.m~
+*.mex*
+slprj/
+# OS / editors
+.DS_Store
+Thumbs.db
+# Raw captures stay out of the repo (hundreds of MB)
+Runs_*/
+*.zip
