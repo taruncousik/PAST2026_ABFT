@@ -62,23 +62,59 @@ title('First 300 snapshots');
 % Questions: about how many snapshots does each need? Compare RLS with the
 % rule of thumb 2N = 32.
 
-%% A3. The forgetting factor on a long capture (Setup 3, 8184 snapshots)
-% Run RLS with gamma = 1, 0.999 and 0.99 on capture 1 and compare.
-% Note: this capture is stitched from 16384-sample hardware blocks with
-% short gaps, so the SOI's phase jumps every ~1000 snapshots (Lab 2, B3).
+%% A3. Three interferers at once (Setup 3): scenario -> live RLS -> result
+% Capture 1 (s3_3) has the SOI plus three interferers. The same four RLS
+% lines as A1 null all three at once -- watch how fast it locks.
 c3 = cap(1);  X3 = c3.X;  K3 = size(X3, 2);  d3 = makeReference(c3);
-gammas = [1 0.999 0.99];
-figure('Name', 'A3: forgetting factor');
-for g = 1:numel(gammas)
-    e3 = nan(1, K3);                       % TODO: run RLS (runRLS below wraps your A1 loop)
-    semilogy(1:K3, movingAverage(abs(e3).^2, 50)); hold on;
+
+% (1) the new scenario, in the spectrum
+figure('Name', 'A3.1: three-interferer scenario');
+[fS, PS] = spectrumdB(X3(1, :), c3.fs);
+plot(fS/1e6, PS); grid on; ylim([-80 40]); labelTones(c3);
+xlabel('frequency (MHz)'); ylabel('dB'); title('Element 1: SOI + three interferers');
+
+% (2) RLS learning, live -- fill the same four lines as A1
+gamma3 = 0.999;
+trR3 = 0;
+for k = 1:K3, trR3 = trR3 + real(X3(:, k)' * X3(:, k)) / K3; end
+P = eye(N) / (0.01 * trR3 / N);  w = zeros(N, 1);  e3 = zeros(1, K3);
+s_soi3 = steeringVector(c3.txAz(1), c3.txEl(1), Ny, Nz, dOverLambda);
+azScan = -90:1:90;
+figure('Name', 'A3.2: RLS learning (live)');
+subplot(2, 1, 1); hP = plot(azScan, zeros(size(azScan))); grid on; ylim([-40 10]); hold on;
+for t = find(c3.txActive), if t == 1, col = 'g--'; else, col = 'r--'; end; plot([c3.txAz(t) c3.txAz(t)], [-40 10], col); end
+hold off; xlabel('azimuth (deg)'); ylabel('|AF| (dB)'); title('Beam pattern (cut at the SOI elevation)');
+subplot(2, 1, 2); hE = semilogy(1:K3, nan(1, K3)); grid on; xlim([1 K3]); ylim([1e-3 10]);
+xlabel('snapshot k'); ylabel('|e(k)|^2'); title('Squared error');
+for k = 1:K3
+    x = X3(:, k);
+    G = zeros(N, 1);                       % TODO: gain  P x / (gamma3 + x^H P x)
+    e3(k) = 0;                             % TODO: error  d3(k) - w^H x
+    w = w;                                 % TODO: weight update  w + G e*
+    P = P;                                 % TODO: update P  (P - G x^H P)/gamma3
+    if mod(k, 25) == 0 || k == K3
+        AF = zeros(size(azScan));
+        for i = 1:numel(azScan), AF(i) = w' * steeringVector(azScan(i), c3.txEl(1), Ny, Nz, dOverLambda); end
+        set(hP, 'YData', 20*log10(abs(AF) / max(abs(w' * s_soi3), 1e-9) + 1e-6));
+        set(hE, 'YData', [abs(e3(1:k)).^2, nan(1, K3 - k)]);
+        drawnow; pause(0.06);
+    end
 end
-hold off; grid on; ylim([1e-3 10]); xlabel('snapshot k'); ylabel('|e(k)|^2, averaged over 50 snapshots');
-legend('\gamma = 1 (remember everything)', '\gamma = 0.999 (memory ~1000)', '\gamma = 0.99 (memory ~100)', 'Location', 'northwest');
-title('RLS with three forgetting factors');
-% Questions: with gamma = 1, why does the error creep up and recover so slowly
-% after each seam? Memory is about 1/(1 - gamma) snapshots. Which gamma
-% would you pick here, and what does a shorter memory cost?
+
+% (3) the result: before vs after
+yRLS = zeros(1, K3);
+for k = 1:K3, yRLS(k) = w' * X3(:, k); end
+figure('Name', 'A3.3: result');
+subplot(2, 1, 1);
+[fB, Pin] = spectrumdB(X3(1, :), c3.fs);  [~, Pout] = spectrumdB(yRLS, c3.fs);
+plot(fB/1e6, Pin - max(Pin), fB/1e6, Pout - max(Pout)); grid on; ylim([-80 5]); labelTones(c3);
+xlabel('frequency (MHz)'); ylabel('dB (each normalized to its peak)');
+legend('element 1 (before)', 'RLS output (after)', 'Location', 'southwest'); title('Before vs after');
+subplot(2, 1, 2);
+toneBar(c3, {X3(1, :), yRLS}, {'element 1', 'RLS'});
+title('Interference cancellation: tone power before vs after');
+% Questions: RLS got no angles either. Did it null all three? How many
+% snapshots did it need -- compare with the LMS learning curve in Lab 2 B3.
 
 %% ===================== PART B: harder =====================
 %% B1. Tracking an interferer that moves
@@ -153,5 +189,43 @@ function m = movingAverage(x, L)
 m = zeros(size(x));
 for k = 1:numel(x)
     m(k) = mean(x(max(1, k-L+1):k));
+end
+end
+
+function toneBar(c, Ys, labels)
+% Grouped bar of tone power (dB) at each transmitter frequency, one bar per
+% output in Ys. Interferers drop while the SOI stays -> cancellation at a glance.
+tones = find(c.txActive);
+nm = {'SOI', 'INT', 'Tx3', 'Tx4'};
+if sum(c.txActive) > 2, nm = {'SOI', 'Tx2', 'Tx3', 'Tx4'}; end
+P = zeros(numel(Ys), numel(tones));
+for b = 1:numel(Ys)
+    for t = 1:numel(tones)
+        P(b, t) = 10*log10(measureTone(Ys{b}, c.fs, c.fTone(tones(t))));
+    end
+end
+bar(P.'); grid on; ylabel('tone power (dB)');
+set(gca, 'XTickLabel', nm(tones)); legend(labels, 'Location', 'northeast');
+end
+
+function labelTones(c)
+% Mark the SOI and interferer tone frequencies on the current spectrum plot.
+nm = {'SOI', 'INT', 'Tx3', 'Tx4'};
+if sum(c.txActive) > 2, nm = {'SOI', 'Tx2', 'Tx3', 'Tx4'}; end
+yl = ylim;
+for t = find(c.txActive)
+    text(c.fTone(t)/1e6, yl(2) - 0.08*diff(yl), nm{t}, 'HorizontalAlignment', 'center', 'FontWeight', 'bold');
+end
+end
+
+function s = steeringVector(az, el, Ny, Nz, dOverLambda)
+% Steering vector from Lab 1 (angles in degrees)
+u = cosd(el) * sind(az);
+v = sind(el);
+s = zeros(Ny*Nz, 1);
+for ny = 1:Ny
+    for nz = 1:Nz
+        s((ny-1)*Nz + nz) = exp(-1j*2*pi*dOverLambda*((ny-1)*u + (nz-1)*v));
+    end
 end
 end

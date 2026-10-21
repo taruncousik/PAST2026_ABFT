@@ -74,7 +74,7 @@ for k = 1:K
         end
         set(hP, 'YData', 20*log10(abs(AF) / max(abs(w' * s_soi), 1e-9) + 1e-6));
         set(hE, 'YData', [abs(e(1:k)).^2, nan(1, K - k)]);
-        drawnow;
+        drawnow; pause(0.06);                    % ~5x slower so the beam is watchable; raise to slow more
     end
 end
 checkAnswer('w_final', w);
@@ -135,33 +135,59 @@ hold off; grid on; ylim([1e-3 1e3]); xlabel('snapshot k'); ylabel('|e(k)|^2, ave
 legend('\mu = 0.02/tr(R)', '\mu = 0.2/tr(R)', '\mu = 1/tr(R)', '\mu = 2.5/tr(R)', 'Location', 'northeast');
 title('Learning curves for four step sizes');
 
-%% B3. Three interferers at once (Setup 3)
-% Capture 2: the SOI plus three interferers at different angles and powers,
-% 8184 snapshots. Build the corrected reference, run LMS, and compare the
-% four tones before and after.
+%% B3. Three interferers at once (Setup 3): scenario -> live LMS -> result
+% Capture 2 (s3_3) has the SOI plus three interferers. The same three LMS
+% lines as A2 handle all of them at once.
 c3 = cap(2);  X3 = c3.X;  K3 = size(X3, 2);
-% ---- YOUR CODE HERE ----------------------------------------
-% Build d3 for capture c3, compute trace(R), run LMS with mu =
-% 0.2/trace(R), keep the final w and the error e3.
-w = zeros(N, 1);  e3 = nan(1, K3);   % placeholder: replace with your code
-% ------------------------------------------------------------
-y3 = zeros(1, K3);
+dTx3 = c3.dTx / mean(abs(c3.dTx));  df3 = c3.fTone(1) - c3.fTxNominal(1);
+d3 = dTx3 .* exp(1j*2*pi*df3*(0:K3-1)/c3.fs);          % corrected reference (A1)
+trR3 = 0;
+for k = 1:K3, trR3 = trR3 + real(X3(:, k)' * X3(:, k)) / K3; end
+mu3 = 0.2 / trR3;
+
+% (1) the new scenario, in the spectrum
+figure('Name', 'B3.1: three-interferer scenario');
+[fS, PS] = spectrumdB(X3(1, :), c3.fs);
+plot(fS/1e6, PS); grid on; ylim([-80 40]); labelTones(c3);
+xlabel('frequency (MHz)'); ylabel('dB'); title('Element 1: SOI + three interferers');
+
+% (2) LMS learning, live -- fill the same three lines as A2
+s_soi3 = steeringVector(c3.txAz(1), c3.txEl(1), Ny, Nz, dOverLambda);
+azScan = -90:1:90;
+w = zeros(N, 1);  e3 = zeros(1, K3);
+figure('Name', 'B3.2: LMS learning (live)');
+subplot(2, 1, 1); hP = plot(azScan, zeros(size(azScan))); grid on; ylim([-40 10]); hold on;
+for t = find(c3.txActive), if t == 1, col = 'g--'; else, col = 'r--'; end; plot([c3.txAz(t) c3.txAz(t)], [-40 10], col); end
+hold off; xlabel('azimuth (deg)'); ylabel('|AF| (dB)'); title('Beam pattern (cut at the SOI elevation)');
+subplot(2, 1, 2); hE = semilogy(1:K3, nan(1, K3)); grid on; xlim([1 K3]); ylim([1e-3 10]);
+xlabel('snapshot k'); ylabel('|e(k)|^2'); title('Squared error');
 for k = 1:K3
-    y3(k) = w' * X3(:, k);
+    y = 0;                                 % TODO: array output  w^H x(k)
+    e3(k) = 0;                             % TODO: error  d3(k) - y
+    w = w;                                 % TODO: LMS update  w + mu3 x e*
+    if mod(k, 25) == 0 || k == K3
+        AF = zeros(size(azScan));
+        for i = 1:numel(azScan), AF(i) = w' * steeringVector(azScan(i), c3.txEl(1), Ny, Nz, dOverLambda); end
+        set(hP, 'YData', 20*log10(abs(AF) / max(abs(w' * s_soi3), 1e-9) + 1e-6));
+        set(hE, 'YData', [abs(e3(1:k)).^2, nan(1, K3 - k)]);
+        drawnow; pause(0.06);
+    end
 end
-fprintf('\nSetup 3, tone power (dB):        SOI    Tx2    Tx3    Tx4\n');
-fprintf('element 1                  '); for t = 1:4, fprintf('%7.1f', 10*log10(measureTone(X3(1, :), c3.fs, c3.fTone(t)))); end; fprintf('\n');
-fprintf('LMS                        '); for t = 1:4, fprintf('%7.1f', 10*log10(measureTone(y3, c3.fs, c3.fTone(t)))); end; fprintf('\n');
-figure('Name', 'B3: three interferers');
-subplot(2, 1, 1); semilogy(1:K3, movingAverage(abs(e3).^2, 100)); grid on; xlabel('snapshot k'); ylabel('|e|^2 (avg of 100)');
-title('Learning curve with three interferers');
-subplot(2, 1, 2); [f, P3] = spectrumdB(y3, c3.fs); plot(f/1e6, P3); grid on; labelTones(c3);
-xlabel('frequency (MHz)'); ylabel('dB'); title('LMS output');
-% Questions: LMS got no angles at all. Did it null all three?
-% The spikes every ~1000 snapshots are real: this long capture is stitched
-% from 16384-sample hardware blocks with short gaps between them, so the
-% SOI's phase jumps against the reference at each seam. How quickly does
-% LMS recover? (RLS, in Lab 3, recovers faster.)
+
+% (3) the result: before vs after
+yLMS = zeros(1, K3);
+for k = 1:K3, yLMS(k) = w' * X3(:, k); end
+figure('Name', 'B3.3: result');
+subplot(2, 1, 1);
+[fB, Pin] = spectrumdB(X3(1, :), c3.fs);  [~, Pout] = spectrumdB(yLMS, c3.fs);
+plot(fB/1e6, Pin - max(Pin), fB/1e6, Pout - max(Pout)); grid on; ylim([-80 5]); labelTones(c3);
+xlabel('frequency (MHz)'); ylabel('dB (each normalized to its peak)');
+legend('element 1 (before)', 'LMS output (after)', 'Location', 'southwest'); title('Before vs after');
+subplot(2, 1, 2);
+toneBar(c3, {X3(1, :), yLMS}, {'element 1', 'LMS'});
+title('Interference cancellation: tone power before vs after');
+% Questions: LMS got no angles at all. Did it null all three interferers?
+% How many dB did each drop, and did the SOI survive?
 
 %% Local functions
 function m = movingAverage(x, L)
@@ -185,6 +211,22 @@ yl = ylim;
 for t = find(c.txActive)
     text(c.fTone(t)/1e6, yl(2) - 0.08*diff(yl), nm{t}, 'HorizontalAlignment', 'center', 'FontWeight', 'bold');
 end
+end
+
+function toneBar(c, Ys, labels)
+% Grouped bar of tone power (dB) at each transmitter frequency, one bar per
+% output in Ys. Interferers drop while the SOI stays -> cancellation at a glance.
+tones = find(c.txActive);
+nm = {'SOI', 'INT', 'Tx3', 'Tx4'};
+if sum(c.txActive) > 2, nm = {'SOI', 'Tx2', 'Tx3', 'Tx4'}; end
+P = zeros(numel(Ys), numel(tones));
+for b = 1:numel(Ys)
+    for t = 1:numel(tones)
+        P(b, t) = 10*log10(measureTone(Ys{b}, c.fs, c.fTone(tones(t))));
+    end
+end
+bar(P.'); grid on; ylabel('tone power (dB)');
+set(gca, 'XTickLabel', nm(tones)); legend(labels, 'Location', 'northeast');
 end
 
 function s = steeringVector(az, el, Ny, Nz, dOverLambda)
