@@ -188,10 +188,7 @@ for p = 1:2
     text(peaksAz(p) + dx, peaksEl(p) + 3, sprintf('%s measured (%d, %d)', name, peaksAz(p), peaksEl(p)), ...
          'Color', 'w', 'FontWeight', 'bold', 'HorizontalAlignment', side);
 end
-% Where we wrote down that the transmitters were:
-plot([azSOI azINT], [elSOI elINT], 'wx', 'MarkerSize', 12, 'LineWidth', 2);
-text(azSOI + 3, elSOI - 3, 'SOI logged', 'Color', 'w');  text(azINT - 3, elINT - 3, 'INT logged', 'Color', 'w', 'HorizontalAlignment', 'right');
-hold off; title('Beam output power (dB):  o = measured peak,  x = logged position');
+hold off; title('Beam output power (dB):  o = measured peak');
 % Questions: how many sources do you see? Do the measured peaks sit on the
 % logged positions? The tripods were placed by hand and the logged angles
 % were estimates. In practice the geometry is never exactly what we think,

@@ -133,9 +133,7 @@ for p = 1:2
     plot(pkAz(p), pkEl(p), 'wo', 'MarkerSize', 12, 'LineWidth', 2);
     text(pkAz(p) - 3, pkEl(p) + 3, sprintf('%s found (%d, %d)', names{p}, pkAz(p), pkEl(p)), 'Color', 'w', 'FontWeight', 'bold', 'HorizontalAlignment', 'right');
 end
-plot([azSOI azINT], [elSOI elINT], 'wx', 'MarkerSize', 12, 'LineWidth', 2);
-text(azSOI + 3, elSOI - 3, 'SOI logged', 'Color', 'w');  text(azINT + 3, elINT - 3, 'INT logged', 'Color', 'w');
-hold off; title('Capon power map (dB):  o = found,  x = logged');
+hold off; title('Capon power map (dB):  o = found');
 iINTfound = find(strcmp(names, 'INT'), 1);
 if isempty(iINTfound), iINTfound = 2; end      % (only happens before the TODOs are filled in)
 azINTfound = pkAz(iINTfound);  elINTfound = pkEl(iINTfound);
